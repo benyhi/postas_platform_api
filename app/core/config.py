@@ -81,6 +81,21 @@ class Settings:
     arca_worker_poll_seconds: float
     arca_worker_batch_size: int
     arca_consumer_final_identification_threshold: float
+    mercado_pago_client_id: str | None
+    mercado_pago_client_secret: str | None
+    mercado_pago_redirect_uri: str | None
+    mercado_pago_api_base_url: str
+    mercado_pago_auth_base_url: str
+    mercado_pago_platform_id: str | None
+    mercado_pago_application_id: str | None
+    mercado_pago_integration_id: str | None
+    mercado_pago_connect_timeout_seconds: float
+    mercado_pago_read_timeout_seconds: float
+    mercado_pago_write_timeout_seconds: float
+    mercado_pago_oauth_state_ttl_seconds: int
+    mercado_pago_refresh_skew_seconds: int
+    mercado_pago_credential_master_keys: str | None
+    mercado_pago_credential_active_key_id: str | None
 
 
 @lru_cache(maxsize=1)
@@ -96,6 +111,10 @@ def get_settings() -> Settings:
     master_keys = master_keys.strip() if master_keys else None
     active_key_id = os.getenv("ARCA_CREDENTIAL_ACTIVE_KEY_ID")
     active_key_id = active_key_id.strip() if active_key_id else None
+    mp_master_keys = os.getenv("MERCADO_PAGO_CREDENTIAL_MASTER_KEYS")
+    mp_master_keys = mp_master_keys.strip() if mp_master_keys else None
+    mp_active_key_id = os.getenv("MERCADO_PAGO_CREDENTIAL_ACTIVE_KEY_ID")
+    mp_active_key_id = mp_active_key_id.strip() if mp_active_key_id else None
 
     return Settings(
         app_name=os.getenv("APP_NAME", "Postas Platform API"),
@@ -130,4 +149,31 @@ def get_settings() -> Settings:
         arca_consumer_final_identification_threshold=_float_env(
             "ARCA_CONSUMER_FINAL_IDENTIFICATION_THRESHOLD", 10_000_000.0
         ),
+        mercado_pago_client_id=os.getenv("MERCADO_PAGO_CLIENT_ID") or None,
+        mercado_pago_client_secret=os.getenv("MERCADO_PAGO_CLIENT_SECRET") or None,
+        mercado_pago_redirect_uri=os.getenv("MERCADO_PAGO_REDIRECT_URI") or None,
+        mercado_pago_api_base_url=os.getenv(
+            "MERCADO_PAGO_API_BASE_URL", "https://api.mercadopago.com"
+        ).rstrip("/"),
+        mercado_pago_auth_base_url=os.getenv(
+            "MERCADO_PAGO_AUTH_BASE_URL", "https://auth.mercadopago.com"
+        ).rstrip("/"),
+        mercado_pago_platform_id=os.getenv("MERCADO_PAGO_PLATFORM_ID") or None,
+        mercado_pago_application_id=os.getenv("MERCADO_PAGO_APPLICATION_ID") or None,
+        mercado_pago_integration_id=(
+            os.getenv("MERCADO_PAGO_INTEGRATOR_ID")
+            or os.getenv("MERCADO_PAGO_INTEGRATION_ID")
+            or None
+        ),
+        mercado_pago_connect_timeout_seconds=_float_env("MERCADO_PAGO_CONNECT_TIMEOUT_SECONDS", 5.0),
+        mercado_pago_read_timeout_seconds=_float_env("MERCADO_PAGO_READ_TIMEOUT_SECONDS", 20.0),
+        mercado_pago_write_timeout_seconds=_float_env("MERCADO_PAGO_WRITE_TIMEOUT_SECONDS", 20.0),
+        mercado_pago_oauth_state_ttl_seconds=max(
+            60, _int_env("MERCADO_PAGO_OAUTH_STATE_TTL_SECONDS", 600)
+        ),
+        mercado_pago_refresh_skew_seconds=max(
+            0, _int_env("MERCADO_PAGO_REFRESH_SKEW_SECONDS", 300)
+        ),
+        mercado_pago_credential_master_keys=mp_master_keys,
+        mercado_pago_credential_active_key_id=mp_active_key_id,
     )

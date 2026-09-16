@@ -1,0 +1,52 @@
+MERCADO PAGO EN PLATFORM
+========================
+
+Platform es la frontera de secretos y de red para Mercado Pago. Persiste una
+conexion por tenant con access/refresh token cifrado, expiracion, collector,
+scopes, entorno y estado. El Authorization Code usa state hasheado de un solo
+uso, PKCE y solicita offline_access. El refresh guarda el refresh token rotado.
+
+Los endpoints tenant-scoped bajo /internal/v1/mercado-pago/tenants/{tenant_id}
+solo aceptan X-Postas-Source: postas_api y X-Postas-Service-Token. Incluyen
+conexion, descubrimiento de GET /terminals/v1/list y GET /v2/pos, creacion y GET
+de /v1/orders, cancelacion y refund total. Las respuestas son sanitizadas.
+
+POST de create/cancel/refund requiere X-Idempotency-Key. El cliente realiza una
+sola llamada mutable; un timeout se devuelve como resultado incierto para que
+Postas conserve PENDING y reprograme con la misma clave.
+
+Billing ofrece reserve, commit y release para pos_sales. Una reserva activa
+cuenta contra el limite. UsageCounter y UsageEvent aumentan solo en commit. La
+reserva fija el periodo al momento de reserve y las tres operaciones son
+idempotentes. No hay expiracion automatica: el reconciliador debe cerrar cada
+reserva explicitamente.
+
+El keyring MERCADO_PAGO_CREDENTIAL_MASTER_KEYS es un JSON key_id -> Fernet key.
+MERCADO_PAGO_CREDENTIAL_ACTIVE_KEY_ID selecciona la clave nueva; conservar las
+anteriores mientras existan filas cifradas con ellas. No registrar ni devolver
+tokens.
+
+Aplicar la migracion Alembic antes de habilitar trafico:
+
+  python -m alembic upgrade head
+
+La desvinculacion destruye los tokens locales. Mercado Pago no documenta un
+endpoint publico de revocacion para este flujo; cualquier revocacion adicional
+se realiza desde la administracion de la cuenta/aplicacion.
+
+Verificacion de entrega:
+
+- Suite Mercado Pago/billing enfocada: 26 tests OK y 1 PostgreSQL opt-in omitido.
+- Suite completa: 96 tests OK y 3 opt-in omitidos.
+- Alembic: un unico head y generacion SQL offline OK.
+- Compose: config valida.
+- El test de concurrencia PostgreSQL queda disponible mediante
+  MERCADO_PAGO_POSTGRES_TEST_DATABASE_URL; no se ejecuto porque Docker Desktop
+  no estaba activo.
+
+Referencias oficiales:
+
+- https://www.mercadopago.com.ar/developers/es/docs/security/oauth/creation
+- https://www.mercadopago.com.ar/developers/es/docs/security/oauth/renewal
+- https://www.mercadopago.com.ar/developers/es/docs/mp-point/payment-processing
+- https://www.mercadopago.com.ar/developers/es/docs/qr-code/payment-processing

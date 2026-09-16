@@ -1,14 +1,26 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.billing.models import Feature, PlanFeature, TenantSubscription, UsageCounter, UsageEvent
+from app.billing.models import (
+    BillingReservation,
+    Feature,
+    PlanFeature,
+    TenantSubscription,
+    UsageCounter,
+    UsageEvent,
+)
 from app.billing.schemas import (
+    BillingReservationActionRequest,
+    BillingReservationReserveRequest,
+    BillingReservationResponse,
     CheckAndConsumeRequest,
     CheckAndConsumeResponse,
     EntitlementCheckRequest,
@@ -24,6 +36,13 @@ from app.billing.schemas import (
 ACTIVE_SUBSCRIPTION_STATUSES = {"trialing", "active"}
 CANCELLED_SUBSCRIPTION_STATUSES = {"cancelled", "canceled"}
 PAYMENT_REQUIRED_SUBSCRIPTION_STATUSES = {"past_due", "unpaid", "payment_failed"}
+
+
+class BillingReservationConflict(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
 
 class BillingService:
@@ -46,7 +65,12 @@ class BillingService:
             if feature.type == "monthly_usage":
                 counter = self.get_usage_counter(tenant_id, feature.key, period_key)
                 used = counter.used if counter else 0
-                remaining = calculate_remaining(plan_feature.limit_value, used)
+                reserved = (
+                    self._active_reserved_amount(tenant_id, feature.key, period_key)
+                    if feature.key == "pos_sales"
+                    else 0
+                )
+                remaining = calculate_remaining(plan_feature.limit_value, used + reserved)
 
             features[feature.key] = TenantFeatureStatus(
                 enabled=plan_feature.enabled and entitlements_active,
@@ -119,9 +143,14 @@ class BillingService:
         if feature.type == "monthly_usage":
             counter = self.get_usage_counter(request.tenant_id, request.feature_key, period_key)
             used = counter.used if counter else 0
+            reserved = (
+                self._active_reserved_amount(request.tenant_id, request.feature_key, period_key)
+                if request.feature_key == "pos_sales"
+                else 0
+            )
             limit_value = plan_feature.limit_value
-            remaining = calculate_remaining(limit_value, used)
-            if limit_value is not None and used + request.amount > limit_value:
+            remaining = calculate_remaining(limit_value, used + reserved)
+            if limit_value is not None and used + reserved + request.amount > limit_value:
                 return self._denied(
                     request.feature_key,
                     reason="quota_exceeded",
@@ -137,7 +166,7 @@ class BillingService:
                 subscription.status,
                 limit=limit_value,
                 used=used,
-                remaining=calculate_remaining(limit_value, used),
+                remaining=calculate_remaining(limit_value, used + reserved),
             )
 
         if feature.type == "resource_limit":
@@ -202,6 +231,7 @@ class BillingService:
         request: CheckAndConsumeRequest,
         request_source: str,
     ) -> CheckAndConsumeResponse:
+        self._locked_subscription(request.tenant_id)
         existing = self.get_usage_event(request.tenant_id, request.feature_key, request.idempotency_key)
         if existing is not None:
             usage = self._usage_response_for_existing_event(existing)
@@ -270,11 +300,264 @@ class BillingService:
             subscription_status=check.subscription_status,
         )
 
+    def reserve_usage(
+        self,
+        request: BillingReservationReserveRequest,
+        request_source: str,
+    ) -> BillingReservationResponse:
+        request_hash = reservation_request_hash(request)
+        subscription = self._locked_subscription(request.tenant_id)
+        if subscription is None:
+            return self._reservation_denied(request.feature_key, "subscription_not_found")
+
+        existing = self.get_reservation(request.tenant_id, request.feature_key, request.idempotency_key)
+        if existing is not None:
+            self._ensure_reservation_request_matches(existing, request_hash)
+            if existing.status != "released":
+                return self._reservation_response(existing, already_applied=True)
+
+        denial_reason = subscription_denial_reason(subscription)
+        if denial_reason is not None:
+            return self._reservation_denied(request.feature_key, denial_reason)
+
+        plan_feature = self.get_plan_feature(subscription.plan_id, request.feature_key)
+        if (
+            plan_feature is None
+            or not plan_feature.enabled
+            or plan_feature.feature.type != "monthly_usage"
+        ):
+            return self._reservation_denied(request.feature_key, "feature_not_enabled")
+
+        period_key = current_period_key()
+        counter = self._locked_usage_counter(request.tenant_id, request.feature_key, period_key)
+        used = counter.used if counter else 0
+        reserved = self._active_reserved_amount(request.tenant_id, request.feature_key, period_key)
+        limit_value = plan_feature.limit_value
+        if limit_value is not None and used + reserved + request.amount > limit_value:
+            return BillingReservationResponse(
+                allowed=False,
+                status="denied",
+                reason="quota_exceeded",
+                feature_key=request.feature_key,
+                period_key=period_key,
+                used=used,
+                reserved=reserved,
+                limit=limit_value,
+                remaining=max(limit_value - used - reserved, 0),
+            )
+
+        if existing is not None:
+            reservation = existing
+            reservation.status = "active"
+            reservation.period_key = period_key
+            reservation.limit_value = limit_value
+            reservation.released_at = None
+        else:
+            reservation = BillingReservation(
+                tenant_id=str(request.tenant_id),
+                feature_key=request.feature_key,
+                idempotency_key=request.idempotency_key,
+                request_hash=request_hash,
+                amount=request.amount,
+                external_id=request.external_id,
+                source=request_source,
+                reservation_metadata=request.metadata or None,
+                period_key=period_key,
+                limit_value=limit_value,
+            )
+            self.db.add(reservation)
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            existing = self.get_reservation(request.tenant_id, request.feature_key, request.idempotency_key)
+            if existing is None:
+                raise
+            self._ensure_reservation_request_matches(existing, request_hash)
+            return self._reservation_response(existing, already_applied=True)
+        self.db.refresh(reservation)
+        return self._reservation_response(reservation)
+
+    def commit_reservation(self, request: BillingReservationActionRequest) -> BillingReservationResponse:
+        self._locked_subscription(request.tenant_id)
+        reservation = self._locked_reservation(request)
+        if reservation.status == "released":
+            raise BillingReservationConflict(
+                "reservation_released",
+                "La reserva ya fue liberada y no puede confirmarse.",
+            )
+        if reservation.status == "committed":
+            return self._reservation_response(reservation, already_applied=True)
+
+        counter = self._locked_usage_counter(
+            request.tenant_id,
+            request.feature_key,
+            reservation.period_key,
+        )
+        if counter is None:
+            counter = UsageCounter(
+                tenant_id=reservation.tenant_id,
+                feature_key=reservation.feature_key,
+                period_key=reservation.period_key,
+                used=0,
+                limit_value=reservation.limit_value,
+            )
+            self.db.add(counter)
+            self.db.flush()
+        counter.used += reservation.amount
+        counter.limit_value = reservation.limit_value
+        counter.updated_at = utc_now()
+        self.db.add(
+            UsageEvent(
+                tenant_id=reservation.tenant_id,
+                feature_key=reservation.feature_key,
+                amount=reservation.amount,
+                source=reservation.source,
+                external_id=reservation.external_id,
+                idempotency_key=f"reservation:{reservation.id}",
+                occurred_at=utc_now(),
+                period_key=reservation.period_key,
+                event_metadata=reservation.reservation_metadata,
+            )
+        )
+        reservation.status = "committed"
+        reservation.committed_at = utc_now()
+        self.db.commit()
+        self.db.refresh(reservation)
+        return self._reservation_response(reservation)
+
+    def release_reservation(self, request: BillingReservationActionRequest) -> BillingReservationResponse:
+        self._locked_subscription(request.tenant_id)
+        reservation = self._locked_reservation(request)
+        if reservation.status == "committed":
+            raise BillingReservationConflict(
+                "reservation_committed",
+                "La reserva ya fue confirmada y no puede liberarse.",
+            )
+        if reservation.status == "released":
+            return self._reservation_response(reservation, already_applied=True)
+        reservation.status = "released"
+        reservation.released_at = utc_now()
+        self.db.commit()
+        self.db.refresh(reservation)
+        return self._reservation_response(reservation)
+
     def get_subscription_for_tenant(self, tenant_id: UUID) -> TenantSubscription | None:
         return self.db.scalar(
             select(TenantSubscription)
             .where(TenantSubscription.tenant_id == str(tenant_id))
             .order_by(TenantSubscription.created_at.desc(), TenantSubscription.id.desc())
+        )
+
+    def get_reservation(
+        self,
+        tenant_id: UUID,
+        feature_key: str,
+        idempotency_key: str,
+    ) -> BillingReservation | None:
+        return self.db.scalar(
+            select(BillingReservation).where(
+                BillingReservation.tenant_id == str(tenant_id),
+                BillingReservation.feature_key == feature_key,
+                BillingReservation.idempotency_key == idempotency_key,
+            )
+        )
+
+    def _locked_subscription(self, tenant_id: UUID) -> TenantSubscription | None:
+        return self.db.scalar(
+            select(TenantSubscription)
+            .where(TenantSubscription.tenant_id == str(tenant_id))
+            .order_by(TenantSubscription.created_at.desc(), TenantSubscription.id.desc())
+            .with_for_update()
+        )
+
+    def _locked_usage_counter(
+        self,
+        tenant_id: UUID,
+        feature_key: str,
+        period_key: str,
+    ) -> UsageCounter | None:
+        return self.db.scalar(
+            select(UsageCounter)
+            .where(
+                UsageCounter.tenant_id == str(tenant_id),
+                UsageCounter.feature_key == feature_key,
+                UsageCounter.period_key == period_key,
+            )
+            .with_for_update()
+        )
+
+    def _active_reserved_amount(self, tenant_id: UUID, feature_key: str, period_key: str) -> int:
+        return int(
+            self.db.scalar(
+                select(func.coalesce(func.sum(BillingReservation.amount), 0)).where(
+                    BillingReservation.tenant_id == str(tenant_id),
+                    BillingReservation.feature_key == feature_key,
+                    BillingReservation.period_key == period_key,
+                    BillingReservation.status == "active",
+                )
+            )
+            or 0
+        )
+
+    def _locked_reservation(self, request: BillingReservationActionRequest) -> BillingReservation:
+        reservation = self.db.scalar(
+            select(BillingReservation)
+            .where(
+                BillingReservation.tenant_id == str(request.tenant_id),
+                BillingReservation.feature_key == request.feature_key,
+                BillingReservation.idempotency_key == request.idempotency_key,
+            )
+            .with_for_update()
+        )
+        if reservation is None:
+            raise BillingReservationConflict("reservation_not_found", "La reserva no existe.")
+        return reservation
+
+    def _ensure_reservation_request_matches(self, reservation: BillingReservation, request_hash: str) -> None:
+        if reservation.request_hash != request_hash:
+            raise BillingReservationConflict(
+                "idempotency_conflict",
+                "La clave de idempotencia ya fue usada con otro payload.",
+            )
+
+    def _reservation_response(
+        self,
+        reservation: BillingReservation,
+        *,
+        already_applied: bool = False,
+    ) -> BillingReservationResponse:
+        counter = self.get_usage_counter(
+            UUID(reservation.tenant_id), reservation.feature_key, reservation.period_key
+        )
+        used = counter.used if counter else 0
+        reserved = self._active_reserved_amount(
+            UUID(reservation.tenant_id), reservation.feature_key, reservation.period_key
+        )
+        return BillingReservationResponse(
+            allowed=True,
+            status=reservation.status,
+            reservation_id=UUID(reservation.id),
+            reason="allowed",
+            feature_key=reservation.feature_key,
+            period_key=reservation.period_key,
+            used=used,
+            reserved=reserved,
+            limit=reservation.limit_value,
+            remaining=(
+                None
+                if reservation.limit_value is None
+                else max(reservation.limit_value - used - reserved, 0)
+            ),
+            already_applied=already_applied,
+        )
+
+    def _reservation_denied(self, feature_key: str, reason: str) -> BillingReservationResponse:
+        return BillingReservationResponse(
+            allowed=False,
+            status="denied",
+            reason=reason,
+            feature_key=feature_key,
         )
 
     def get_plan_feature(self, plan_id: int, feature_key: str) -> PlanFeature | None:
@@ -449,6 +732,12 @@ def calculate_remaining(limit_value: int | None, used: int | None) -> int | None
     if limit_value is None or used is None:
         return None
     return max(limit_value - used, 0)
+
+
+def reservation_request_hash(request: BillingReservationReserveRequest) -> str:
+    payload = request.model_dump(mode="json", exclude={"idempotency_key"})
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def effective_subscription_status(subscription: TenantSubscription) -> str:

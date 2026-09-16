@@ -5,6 +5,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.billing import models  # noqa: F401
 from app.arca import models as arca_models  # noqa: F401
+from app.mercado_pago import models as mercado_pago_models  # noqa: F401
 from app.core.config import get_settings
 from app.db.base import Base
 

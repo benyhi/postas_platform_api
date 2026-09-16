@@ -127,6 +127,22 @@ primero ese mismo comprobante y adopta un CAE existente.
 No habilita produccion por tener un perfil productivo: la instancia tambien
 debe configurar `ARCA_PRODUCTION_CALLS_ENABLED=true`.
 
+## Mercado Pago Point y QR
+
+Platform concentra OAuth, cifrado de tokens, refresh y llamadas a la Orders
+API. Los endpoints internos `/internal/v1/mercado-pago/tenants/{tenant_id}` solo
+aceptan llamadas de `postas_api`; el callback publico es
+`/api/v1/mercado-pago/oauth/callback`. Las operaciones mutables requieren
+`X-Idempotency-Key` y no se reintentan automaticamente.
+
+Las reservas de `pos_sales` se exponen en
+`/internal/v1/billing/reservations/{reserve,commit,release}`. Reservar ocupa
+capacidad, pero el consumo mensual solo aumenta al confirmar.
+
+Configuracion, contratos y rotacion del keyring:
+
+- [docs/mercado_pago_point_qr.txt](docs/mercado_pago_point_qr.txt)
+
 ## Ejecutar local
 
 Con Docker:

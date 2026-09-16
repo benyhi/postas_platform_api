@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -149,3 +149,32 @@ class CheckAndConsumeResponse(BaseModel):
     remaining: int | None = None
     subscription_status: str | None = None
     upgrade_required: bool = False
+
+
+class BillingReservationReserveRequest(BaseModel):
+    tenant_id: UUID
+    feature_key: Literal["pos_sales"] = "pos_sales"
+    idempotency_key: str = Field(min_length=1, max_length=160)
+    amount: int = Field(default=1, ge=1)
+    external_id: str | None = Field(default=None, max_length=120)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class BillingReservationActionRequest(BaseModel):
+    tenant_id: UUID
+    feature_key: Literal["pos_sales"] = "pos_sales"
+    idempotency_key: str = Field(min_length=1, max_length=160)
+
+
+class BillingReservationResponse(BaseModel):
+    allowed: bool
+    status: Literal["active", "committed", "released", "denied"]
+    reservation_id: UUID | None = None
+    reason: str
+    feature_key: str = "pos_sales"
+    period_key: str | None = None
+    used: int | None = None
+    reserved: int | None = None
+    limit: int | None = None
+    remaining: int | None = None
+    already_applied: bool = False

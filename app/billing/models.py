@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import (
     Boolean,
@@ -180,4 +181,38 @@ class UsageCounter(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+
+class BillingReservation(Base):
+    __tablename__ = "billing_reservations"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "feature_key",
+            "idempotency_key",
+            name="uq_billing_reservations_idempotency",
+        ),
+        Index("ix_billing_reservations_tenant_id", "tenant_id"),
+        Index("ix_billing_reservations_period", "tenant_id", "feature_key", "period_key"),
+        Index("ix_billing_reservations_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    feature_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    amount: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+    external_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    source: Mapped[str] = mapped_column(String(80), nullable=False)
+    reservation_metadata: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSON, nullable=True)
+    period_key: Mapped[str] = mapped_column(String(7), nullable=False)
+    limit_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", nullable=False)
+    committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )

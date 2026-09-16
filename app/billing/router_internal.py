@@ -4,6 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.billing.dependencies import InternalRequestContext, get_billing_service, verify_internal_request
 from app.billing.schemas import (
+    BillingReservationActionRequest,
+    BillingReservationReserveRequest,
+    BillingReservationResponse,
     CheckAndConsumeRequest,
     CheckAndConsumeResponse,
     EntitlementCheckRequest,
@@ -12,7 +15,7 @@ from app.billing.schemas import (
     UsageConsumeRequest,
     UsageConsumeResponse,
 )
-from app.billing.service import BillingService
+from app.billing.service import BillingReservationConflict, BillingService
 
 
 router = APIRouter(
@@ -59,3 +62,51 @@ def check_and_consume_usage(
     service: BillingService = Depends(get_billing_service),
 ) -> CheckAndConsumeResponse:
     return service.check_and_consume_usage(payload, request_source=context.source)
+
+
+def _require_postas_api(context: InternalRequestContext) -> None:
+    if context.source != "postas_api":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Las reservas de billing solo aceptan llamadas de postas_api",
+        )
+
+
+def _reservation_call(callback):
+    try:
+        return callback()
+    except BillingReservationConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+
+
+@router.post("/billing/reservations/reserve", response_model=BillingReservationResponse)
+def reserve_billing(
+    payload: BillingReservationReserveRequest,
+    context: InternalRequestContext = Depends(verify_internal_request),
+    service: BillingService = Depends(get_billing_service),
+) -> BillingReservationResponse:
+    _require_postas_api(context)
+    return _reservation_call(lambda: service.reserve_usage(payload, context.source))
+
+
+@router.post("/billing/reservations/commit", response_model=BillingReservationResponse)
+def commit_billing(
+    payload: BillingReservationActionRequest,
+    context: InternalRequestContext = Depends(verify_internal_request),
+    service: BillingService = Depends(get_billing_service),
+) -> BillingReservationResponse:
+    _require_postas_api(context)
+    return _reservation_call(lambda: service.commit_reservation(payload))
+
+
+@router.post("/billing/reservations/release", response_model=BillingReservationResponse)
+def release_billing(
+    payload: BillingReservationActionRequest,
+    context: InternalRequestContext = Depends(verify_internal_request),
+    service: BillingService = Depends(get_billing_service),
+) -> BillingReservationResponse:
+    _require_postas_api(context)
+    return _reservation_call(lambda: service.release_reservation(payload))
