@@ -64,6 +64,39 @@ def auth_headers(source: str = "postas_api") -> dict[str, str]:
     }
 
 
+def test_liveness_does_not_depend_on_database(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_execute(*_args, **_kwargs):
+        raise RuntimeError('database unavailable')
+
+    monkeypatch.setattr(Session, 'execute', fail_execute)
+    response = client.get('/api/v1/health')
+
+    assert response.status_code == 200
+    assert response.json() == {'status': 'ok'}
+
+
+def test_readiness_checks_database(client: TestClient) -> None:
+    response = client.get('/api/v1/ready')
+
+    assert response.status_code == 200
+    assert response.json() == {'status': 'ready'}
+
+
+def test_readiness_fails_closed_when_database_is_unavailable(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_execute(*_args, **_kwargs):
+        raise RuntimeError('database unavailable')
+
+    monkeypatch.setattr(Session, 'execute', fail_execute)
+    response = client.get('/api/v1/ready')
+
+    assert response.status_code == 503
+    assert response.json() == {'detail': 'Service unavailable'}
+
+
 def create_subscription(
     db: Session,
     tenant_id: UUID,

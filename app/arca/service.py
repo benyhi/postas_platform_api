@@ -76,6 +76,36 @@ def _sanitize(message: str) -> str:
     return sanitized.strip()[:1000]
 
 
+_SENSITIVE_PROVIDER_KEYS = {
+    'access_token',
+    'authorization',
+    'certificate',
+    'client_secret',
+    'password',
+    'private_key',
+    'secret',
+    'token',
+}
+
+
+def _sanitize_provider_payload(value: Any, *, key: str = '') -> Any:
+    normalized_key = key.casefold().replace('-', '_').replace(' ', '_')
+    if any(marker in normalized_key for marker in _SENSITIVE_PROVIDER_KEYS):
+        return '[REDACTED]'
+    if isinstance(value, dict):
+        return {
+            item_key: _sanitize_provider_payload(item_value, key=str(item_key))
+            for item_key, item_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_sanitize_provider_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_provider_payload(item) for item in value]
+    if isinstance(value, str):
+        return _sanitize(value)
+    return value
+
+
 class FiscalProfileService:
     def __init__(
         self,
@@ -682,7 +712,7 @@ class InvoiceService:
         record.cae = normalized["cae"]
         record.cae_expiration_date = normalized["expiration"]
         record.arca_result = normalized["result"]
-        record.arca_response = raw
+        record.arca_response = _sanitize_provider_payload(raw)
         record.observations = normalized["observations"]
         record.last_error_code = None
         record.last_error_message = None
@@ -694,7 +724,7 @@ class InvoiceService:
         record.status = "rejected" if error.code in {"arca_rejected", "correlative_conflict"} else "failed"
         record.last_error_code = error.code
         record.last_error_message = error.message
-        record.arca_response = raw
+        record.arca_response = _sanitize_provider_payload(raw)
         record.next_retry_at = None
         self.db.commit()
         return self.to_response(record)

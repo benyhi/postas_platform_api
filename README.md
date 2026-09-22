@@ -143,6 +143,17 @@ Configuracion, contratos y rotacion del keyring:
 
 - [docs/mercado_pago_point_qr.txt](docs/mercado_pago_point_qr.txt)
 
+## Preproduccion conjunta
+
+La orquestacion productiva-simulada de ambos backends vive en el repositorio
+hermano `postas_api`, archivo `docker-compose.preprod.yml`. Ese stack usa una
+base exclusiva para Platform, ejecuta Alembic y el seed como job one-shot, no
+monta el codigo fuente y no publica `/internal/v1`.
+
+Las credenciales son de desarrollo y se cargan desde `postas_api/preprod.env`,
+que no debe versionarse. El Compose local de este repositorio se conserva para
+trabajar Platform de forma aislada.
+
 ## Ejecutar local
 
 Con Docker:
@@ -162,6 +173,12 @@ Con entorno local:
 
 ## Tests
 
+Instalar las dependencias de desarrollo antes de ejecutar la suite:
+
+```bash
+.\env\Scripts\python.exe -m pip install -r requirements-dev.txt
+```
+
 ```bash
 .\env\Scripts\python.exe -m pytest tests/test_billing.py -q
 .\env\Scripts\python.exe -m pytest tests/test_arca.py -q
@@ -170,3 +187,8 @@ Con entorno local:
 `tests/test_arca_live.py` es opt-in, rechaza `production` y solo consulta WSFE
 en homologacion; las variables necesarias estan documentadas en
 `docs/arca_invoicing_service.txt`.
+## Hardening de seguridad
+
+- `REQUIRE_API_TOKEN` usa `true` por defecto. Solo debe desactivarse explicitamente en un entorno local aislado.
+- La descarga remota de imagenes solo acepta HTTP/HTTPS en puertos 80/443, desactiva redirects automaticos y proxies de entorno, revalida cada redirect y rechaza destinos no publicos.
+- Las respuestas crudas de ARCA se sanitizan antes de persistirse; tokens, secretos, credenciales, certificados y claves privadas se redactan.

@@ -1,11 +1,26 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app.core.security import RequestContext, verify_request
+from app.db.session import get_db
 from app.schemas import DocumentExtractionRequest, DocumentExtractionResponse
 from app.services.document_extractions import DocumentExtractionService
 
 
 router = APIRouter()
+
+
+@router.get('/ready')
+def ready(db: Session = Depends(get_db)) -> dict[str, str]:
+    try:
+        db.execute(text('SELECT 1'))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail='Service unavailable',
+        ) from exc
+    return {'status': 'ready'}
 
 
 def get_document_extraction_service() -> DocumentExtractionService:

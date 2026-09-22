@@ -133,7 +133,7 @@ def get_settings() -> Settings:
         input_token_cost_per_million=_float_env("INPUT_TOKEN_COST_PER_MILLION", 0.0),
         output_token_cost_per_million=_float_env("OUTPUT_TOKEN_COST_PER_MILLION", 0.0),
         postas_ai_api_token=api_token,
-        require_api_token=_bool_env("REQUIRE_API_TOKEN", False),
+        require_api_token=_bool_env("REQUIRE_API_TOKEN", True),
         token_header_name=os.getenv("POSTAS_AI_TOKEN_HEADER", "X-Postas-AI-Token"),
         source_header_name=os.getenv("POSTAS_AI_SOURCE_HEADER", "X-Postas-Source"),
         allowed_request_sources=_csv_env("ALLOWED_REQUEST_SOURCES"),
