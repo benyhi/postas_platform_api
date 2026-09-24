@@ -18,6 +18,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from scripts.seed_plan_tenants import seed_plan_tenants
+from scripts.seed_preprod_tenant import DEFAULT_TENANT_ID, seed_preprod_tenant
 
 
 @pytest.fixture()
@@ -210,6 +211,162 @@ def test_seed_plan_tenants_creates_missing_consecutive_tenants_and_is_idempotent
     assert second_result.created_payments == 0
     assert db_session.scalar(select(func.count()).select_from(TenantSubscription)) == 6
     assert db_session.scalar(select(func.count()).select_from(Payment)) == 6
+
+
+def test_seed_preprod_tenant_is_idempotent_and_uses_requested_plan(db_session: Session) -> None:
+    tenant_id = UUID('00000000-0000-0000-0000-000000000001')
+
+    first = seed_preprod_tenant(db_session, tenant_id=tenant_id, plan_code='business_ai')
+    first_subscription = db_session.scalar(
+        select(TenantSubscription).where(TenantSubscription.tenant_id == str(tenant_id))
+    )
+    first_payment = db_session.scalar(
+        select(Payment).where(Payment.tenant_id == str(tenant_id))
+    )
+    assert first_subscription is not None
+    assert first_payment is not None
+    first_subscription_id = first_subscription.id
+    first_payment_id = first_payment.id
+    first_period = (
+        first_subscription.current_period_start,
+        first_subscription.current_period_end,
+        first_payment.paid_at,
+        first_payment.period_start,
+        first_payment.period_end,
+    )
+
+    second = seed_preprod_tenant(db_session, tenant_id=tenant_id, plan_code='business_ai')
+
+    subscription = db_session.scalar(
+        select(TenantSubscription).where(TenantSubscription.tenant_id == str(tenant_id))
+    )
+    assert subscription is not None
+    assert subscription.id == first_subscription_id
+    assert subscription.tenant_id == str(DEFAULT_TENANT_ID) == str(tenant_id)
+    assert subscription.plan.code == 'business_ai'
+    assert subscription.status == 'active'
+    assert subscription.current_period_end > subscription.current_period_start
+    assert subscription.cancel_at_period_end is False
+    assert first.subscription_created is True
+    assert first.payment_created is True
+    assert second.subscription_created is False
+    assert second.payment_created is False
+    assert db_session.scalar(
+        select(func.count()).select_from(TenantSubscription).where(
+            TenantSubscription.tenant_id == str(tenant_id)
+        )
+    ) == 1
+    assert db_session.scalar(
+        select(func.count()).select_from(Payment).where(Payment.tenant_id == str(tenant_id))
+    ) == 1
+    payment = db_session.scalar(select(Payment).where(Payment.tenant_id == str(tenant_id)))
+    assert payment is not None
+    assert payment.id == first_payment_id
+    assert payment.subscription_id == subscription.id
+    assert payment.provider == 'manual'
+    assert payment.provider_payment_id == f'preprod-{tenant_id.hex}-business_ai'
+    assert payment.provider_status == 'approved'
+    assert payment.raw_payload == {
+        'source': 'scripts/seed_preprod_tenant.py',
+        'plan_code': 'business_ai',
+    }
+    assert (
+        subscription.current_period_start,
+        subscription.current_period_end,
+        payment.paid_at,
+        payment.period_start,
+        payment.period_end,
+    ) == first_period
+
+
+def test_seed_preprod_tenant_rejects_existing_unmanaged_subscription(
+    db_session: Session,
+) -> None:
+    tenant_id = UUID('00000000-0000-0000-0000-000000000001')
+    existing = create_subscription(db_session, tenant_id, 'starter')
+    original_period = (existing.current_period_start, existing.current_period_end)
+
+    with pytest.raises(ValueError, match='no administrada por este seed'):
+        seed_preprod_tenant(db_session, tenant_id=tenant_id, plan_code='business_ai')
+
+    db_session.refresh(existing)
+    assert existing.plan.code == 'starter'
+    assert (existing.current_period_start, existing.current_period_end) == original_period
+    assert db_session.scalar(
+        select(func.count()).select_from(Payment).where(Payment.tenant_id == str(tenant_id))
+    ) == 0
+
+
+def test_seed_preprod_tenant_does_not_adopt_new_subscription_from_historical_seed_payment(
+    db_session: Session,
+) -> None:
+    tenant_id = UUID('00000000-0000-0000-0000-000000000001')
+    seed_preprod_tenant(db_session, tenant_id=tenant_id, plan_code='business_ai')
+    historical_subscription = db_session.scalar(
+        select(TenantSubscription).where(TenantSubscription.tenant_id == str(tenant_id))
+    )
+    assert historical_subscription is not None
+    historical_subscription.status = 'cancelled'
+    db_session.commit()
+
+    current_subscription = create_subscription(db_session, tenant_id, 'starter')
+    current_subscription_id = current_subscription.id
+    original_period = (
+        current_subscription.current_period_start,
+        current_subscription.current_period_end,
+    )
+
+    with pytest.raises(ValueError, match='no administrada por este seed'):
+        seed_preprod_tenant(db_session, tenant_id=tenant_id, plan_code='business_ai')
+
+    db_session.refresh(current_subscription)
+    assert current_subscription.id == current_subscription_id
+    assert current_subscription.plan.code == 'starter'
+    assert (
+        current_subscription.current_period_start,
+        current_subscription.current_period_end,
+    ) == original_period
+
+
+def test_seed_preprod_tenant_rejects_invalid_period_without_writes(
+    db_session: Session,
+) -> None:
+    tenant_id = UUID('00000000-0000-0000-0000-000000000001')
+
+    with pytest.raises(ValueError, match='period_days debe ser mayor a cero'):
+        seed_preprod_tenant(
+            db_session,
+            tenant_id=tenant_id,
+            plan_code='business_ai',
+            period_days=0,
+        )
+
+    assert db_session.scalar(
+        select(func.count()).select_from(TenantSubscription).where(
+            TenantSubscription.tenant_id == str(tenant_id)
+        )
+    ) == 0
+    assert db_session.scalar(
+        select(func.count()).select_from(Payment).where(Payment.tenant_id == str(tenant_id))
+    ) == 0
+
+
+def test_seed_preprod_tenant_rejects_unknown_plan_without_tenant_records(
+    db_session: Session,
+) -> None:
+    tenant_id = UUID('00000000-0000-0000-0000-000000000001')
+
+    with pytest.raises(ValueError, match='Plan activo inexistente: missing-plan'):
+        seed_preprod_tenant(db_session, tenant_id=tenant_id, plan_code='missing-plan')
+
+    assert db_session.scalar(
+        select(func.count()).select_from(TenantSubscription).where(
+            TenantSubscription.tenant_id == str(tenant_id)
+        )
+    ) == 0
+    assert db_session.scalar(
+        select(func.count()).select_from(Payment).where(Payment.tenant_id == str(tenant_id))
+    ) == 0
 
 
 def test_business_ai_can_use_document_extraction_when_quota_available(db_session: Session) -> None:
