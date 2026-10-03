@@ -73,13 +73,44 @@ El catalogo inicial de planes y features es idempotente:
 .\env\Scripts\python.exe scripts\seed_billing.py
 ```
 
-El plan `test` queda incluido en ese seed. Es privado y habilita todas las
-features; las features de consumo mensual o limite de recursos quedan con
-limite `1`.
+El codigo `test` queda incluido como Demo 1, junto a Demo 2 y Demo 3.
+Son privados y gratuitos, habilitan todas las features salvo extraccion por IA
+y usan los limites reducidos detallados en la seccion de datos demo.
 
 La feature `cashboxes` limita sesiones de caja abiertas simultaneamente por
-tenant: Free `1`, Starter `3`, Business `5`, Business + IA y Custom sin limite,
-y Test `1`. Ejecutar este seed antes de desplegar la apertura multi-terminal.
+tenant: Free `1`, Starter `3`, Business `5`, Business + IA sin limite,
+Custom `2` y Demo 1/2/3 `1`. Demo 1 conserva el codigo tecnico `test`.
+Ejecutar este seed antes de desplegar la apertura multi-terminal.
+
+### Dataset de demostracion anual
+
+El lanzador `scripts/seed_demo.py` de `postas_api` coordina ambas bases mediante
+un manifiesto reproducible. Este repositorio ofrece las fases locales:
+
+```powershell
+& D:\benja\proyectos\postas_platform_api\env\Scripts\python.exe D:\benja\proyectos\postas_platform_api\scripts\seed_demo.py --manifest <manifest.json> --phase preflight --dry-run
+# Fases siguientes: subscriptions, usage, verify (en ese orden; Postas genera usage_events).
+```
+
+Usar la configuracion de base de Platform y ejecutar sus migraciones antes.
+El script no crea tablas, no llama proveedores y no envia pagos ni correos.
+Cada fase de escritura tiene una transaccion; no hay atomicidad entre bases.
+Repetir el mismo manifiesto recupera fases incompletas sin duplicar consumos.
+UUID con datos ajenos o fingerprints diferentes se rechazan sin adopcion.
+Los contadores preservan actividad posterior; verificar reconcilia el total
+contra todos los eventos registrados. No existe borrado/reset automatico.
+
+Cada tenant lleva un evento tecnico `__seed_manifest__` de cantidad cero,
+sin contador, con fingerprint y referencia a su suscripcion. Esto permite
+identificar tambien planes gratuitos sin inventar pagos. Los planes pagos
+tienen mensualidades manuales aprobadas desde el mes inicial al actual;
+Free y Demo no generan pagos. Los consumos se agrupan por mes UTC.
+
+El catalogo mantiene Free, Starter, Business y Business + IA. Custom es privado,
+cuesta ARS 49.999 y limita productos/ventas/cajas/proveedores/usuarios/emails a
+100/1000/2/10/3/30. Demo 1 (`test`), Demo 2 (`demo_2`) y Demo 3 (`demo_3`) son
+privados y gratuitos, con limites 10/10/1/2/3/2. Custom y Demo habilitan las
+features booleanas y deshabilitan extraccion documental por IA.
 
 Para crear tenants locales de prueba, uno por cada plan activo, ejecutar:
 

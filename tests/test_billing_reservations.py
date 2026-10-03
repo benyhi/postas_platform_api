@@ -54,9 +54,12 @@ def headers(source: str = "postas_api") -> dict[str, str]:
     return {"X-Postas-Source": source, "X-Postas-Service-Token": "test-token"}
 
 
-def subscription(db: Session, tenant_id: UUID, plan_code: str = "test") -> None:
+def subscription(db: Session, tenant_id: UUID, plan_code: str = "test", *, single_sale_quota: bool = False) -> None:
     plan = db.scalar(select(Plan).where(Plan.code == plan_code))
     assert plan is not None
+    if single_sale_quota:
+        # These capacity tests require one slot; the production Demo plan now has ten.
+        next(item for item in plan.features if item.feature.key == "pos_sales").limit_value = 1
     now = datetime.now(timezone.utc)
     db.add(
         TenantSubscription(
@@ -93,7 +96,7 @@ def test_active_reservation_counts_against_limit_without_consuming(
     client: TestClient, db_session: Session
 ) -> None:
     tenant_id = uuid4()
-    subscription(db_session, tenant_id)
+    subscription(db_session, tenant_id, single_sale_quota=True)
 
     first = client.post(
         "/internal/v1/billing/reservations/reserve",
@@ -336,7 +339,7 @@ def test_released_reservation_replay_rechecks_current_capacity(
     client: TestClient, db_session: Session
 ) -> None:
     tenant_id = uuid4()
-    subscription(db_session, tenant_id, "test")
+    subscription(db_session, tenant_id, "test", single_sale_quota=True)
     released_payload = reserve_payload(tenant_id, "released-slot")
     client.post(
         "/internal/v1/billing/reservations/reserve",
@@ -377,7 +380,7 @@ def test_active_reservation_blocks_traditional_check_and_consume(
     client: TestClient, db_session: Session
 ) -> None:
     tenant_id = uuid4()
-    subscription(db_session, tenant_id, "test")
+    subscription(db_session, tenant_id, "test", single_sale_quota=True)
     client.post(
         "/internal/v1/billing/reservations/reserve",
         json=reserve_payload(tenant_id, "reserved-slot"),

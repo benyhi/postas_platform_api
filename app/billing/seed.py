@@ -123,35 +123,48 @@ PLAN_CATALOG: list[dict[str, Any]] = [
     {
         "code": "custom",
         "name": "Custom",
-        "price_amount": None,
+        "price_amount": Decimal("49999.00"),
         "is_public": False,
         "features": {
-            "cashboxes": (True, None, None),
+            **{feature["key"]: (True, None, None) for feature in FEATURE_CATALOG},
+            "products": (True, 100, None),
+            "pos_sales": (True, 1000, "monthly"),
+            "cashboxes": (True, 2, None),
+            "suppliers": (True, 10, None),
+            "users": (True, 3, None),
+            "cashbox_email_report": (True, 30, "monthly"),
+            "document_extraction": (False, None, None),
         },
     },
     {
         "code": "test",
-        "name": "Test",
+        "name": "Demo 1",
         "price_amount": Decimal("0.00"),
         "is_public": False,
         "features": {
-            "pos_sales": (True, 1, "monthly"),
+            "pos_sales": (True, 10, "monthly"),
             "sales_history": (True, None, None),
-            "products": (True, 1, None),
+            "products": (True, 10, None),
             "cashboxes": (True, 1, None),
-            "suppliers": (True, 1, None),
-            "users": (True, 1, None),
+            "suppliers": (True, 2, None),
+            "users": (True, 3, None),
             "basic_reports": (True, None, None),
-            "document_extraction": (True, 1, "monthly"),
+            "document_extraction": (False, None, None),
             "advanced_reports": (True, None, None),
             "import_products": (True, None, None),
             "export_products": (True, None, None),
             "priority_support": (True, None, None),
-            "cashbox_email_report": (True, 1, "monthly"),
+            "cashbox_email_report": (True, 2, "monthly"),
             "arca_invoicing": (True, None, None),
         },
     },
 ]
+
+for demo_number in (2, 3):
+    PLAN_CATALOG.append({
+        **PLAN_CATALOG[-1], "code": f"demo_{demo_number}", "name": f"Demo {demo_number}",
+        "features": dict(PLAN_CATALOG[-1]["features"]),
+    })
 
 
 @dataclass(frozen=True)
@@ -161,7 +174,7 @@ class BillingSeedResult:
     plan_features: int
 
 
-def seed_billing_catalog(db: Session) -> BillingSeedResult:
+def seed_billing_catalog(db: Session, *, commit: bool = True) -> BillingSeedResult:
     features_by_key: dict[str, Feature] = {}
     for feature_data in FEATURE_CATALOG:
         feature = db.scalar(select(Feature).where(Feature.key == feature_data["key"]))
@@ -213,7 +226,10 @@ def seed_billing_catalog(db: Session) -> BillingSeedResult:
             plan_feature.hard_limit = True
             plan_feature_count += 1
 
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return BillingSeedResult(
         plans=len(PLAN_CATALOG),
         features=len(FEATURE_CATALOG),

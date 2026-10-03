@@ -126,7 +126,7 @@ def test_seed_creates_plans_and_features_without_duplicates(db_session: Session)
     seed_billing_catalog(db_session)
     second_plan_count = db_session.scalar(select(func.count()).select_from(Plan))
 
-    assert first_plan_count == 6
+    assert first_plan_count == 8
     assert second_plan_count == first_plan_count
 
 
@@ -137,7 +137,7 @@ def test_seed_creates_plans_and_features_without_duplicates(db_session: Session)
         ("starter", 3),
         ("business", 5),
         ("business_ai", None),
-        ("custom", None),
+        ("custom", 2),
         ("test", 1),
     ],
 )
@@ -158,10 +158,10 @@ def test_seed_configures_simultaneous_open_cashbox_limits(
     assert cashboxes.feature.description == "Cantidad maxima de cajas abiertas simultaneamente."
 
 
-def test_seed_creates_test_plan_with_one_unit_limits(db_session: Session) -> None:
+def test_seed_creates_demo_plan_with_demo_limits(db_session: Session) -> None:
     plan = db_session.scalar(select(Plan).where(Plan.code == "test"))
     assert plan is not None
-    assert plan.name == "Test"
+    assert plan.name == "Demo 1"
     assert plan.is_public is False
 
     features = db_session.scalars(select(Feature)).all()
@@ -170,12 +170,11 @@ def test_seed_creates_test_plan_with_one_unit_limits(db_session: Session) -> Non
     assert set(plan_features) == {feature.key for feature in features}
     for feature in features:
         plan_feature = plan_features[feature.key]
-        assert plan_feature.enabled is True
-        if feature.type in {"monthly_usage", "resource_limit"}:
-            assert plan_feature.limit_value == 1
-        else:
-            assert plan_feature.limit_value is None
-        if feature.type == "monthly_usage":
+        assert plan_feature.enabled is (feature.key != "document_extraction")
+        expected_limits = {"products": 10, "pos_sales": 10, "cashboxes": 1,
+                           "suppliers": 2, "users": 3, "cashbox_email_report": 2}
+        assert plan_feature.limit_value == expected_limits.get(feature.key)
+        if feature.type == "monthly_usage" and plan_feature.enabled:
             assert plan_feature.reset_period == "monthly"
 
 
@@ -200,17 +199,19 @@ def test_seed_plan_tenants_creates_missing_consecutive_tenants_and_is_idempotent
         "business_ai": 4,
         "custom": 5,
         "test": 6,
+        "demo_2": 7,
+        "demo_3": 8,
     }
-    assert first_result.created_subscriptions == 5
-    assert first_result.created_payments == 6
-    assert db_session.scalar(select(func.count()).select_from(Payment)) == 6
+    assert first_result.created_subscriptions == 7
+    assert first_result.created_payments == 8
+    assert db_session.scalar(select(func.count()).select_from(Payment)) == 8
 
     second_result = seed_plan_tenants(db_session)
 
     assert second_result.created_subscriptions == 0
     assert second_result.created_payments == 0
-    assert db_session.scalar(select(func.count()).select_from(TenantSubscription)) == 6
-    assert db_session.scalar(select(func.count()).select_from(Payment)) == 6
+    assert db_session.scalar(select(func.count()).select_from(TenantSubscription)) == 8
+    assert db_session.scalar(select(func.count()).select_from(Payment)) == 8
 
 
 def test_seed_preprod_tenant_is_idempotent_and_uses_requested_plan(db_session: Session) -> None:
@@ -671,7 +672,7 @@ def test_cashbox_entitlement_allows_limit_and_denies_projected_count_above_it(
     assert denied.remaining == 0
 
 
-@pytest.mark.parametrize("plan_code", ["business_ai", "custom"])
+@pytest.mark.parametrize("plan_code", ["business_ai"])
 def test_cashbox_entitlement_is_unlimited_for_unlimited_plans(
     db_session: Session,
     plan_code: str,

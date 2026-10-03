@@ -39,17 +39,28 @@ debe enviar en `resource_count` la cantidad proyectada de cajas abiertas.
 | `starter` | 3 |
 | `business` | 5 |
 | `business_ai` | Sin limite |
-| `custom` | Sin limite |
+| `custom` | 2 |
 | `test` | 1 |
+| `demo_2` | 1 |
+| `demo_3` | 1 |
 
 El despliegue debe ejecutar `python scripts/seed_billing.py` antes de habilitar
 la apertura multi-terminal en Postas. El cierre de sesiones existentes no
 consulta este entitlement: un downgrade puede impedir nuevas aperturas, pero no
 debe impedir el cierre operativo.
 
-El catalogo incluye un plan privado `test`. Ese plan habilita todas las
-features y configura limite `1` para las features de tipo `monthly_usage` y
-`resource_limit`, para probar permisos y limites rapidamente.
+El codigo `test` se conserva por compatibilidad y su nombre visible es Demo 1.
+Demo 1, Demo 2 (`demo_2`) y Demo 3 (`demo_3`) son privados y gratuitos: habilitan
+todas las features salvo `document_extraction`, con 10 productos, 10 ventas/mes,
+1 caja abierta, 2 proveedores, 3 usuarios y 2 reportes por email/mes.
+
+Custom es privado, cuesta ARS 49.999/mes y habilita todas las features salvo
+`document_extraction`: 100 productos, 1.000 ventas/mes, 2 cajas abiertas,
+10 proveedores, 3 usuarios y 30 reportes por email/mes.
+
+Para el dataset coordinado con Postas usar su lanzador `scripts/seed_demo.py`;
+la contraparte local de Platform recibe el manifiesto compartido. Ver README.
+Los cambios de catalogo afectan las suscripciones existentes al ejecutar el seed.
 
 ## Tenants locales por plan
 

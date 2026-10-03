@@ -222,7 +222,7 @@ def valid_profile(db, tenant_id, environment="development", billing=None):
     return profile, fake, service
 
 
-@pytest.mark.parametrize("plan_code", ["business", "business_ai", "test"])
+@pytest.mark.parametrize("plan_code", ["business", "business_ai", "custom", "test", "demo_2", "demo_3"])
 def test_arca_entitlement_is_enabled_for_initial_supported_plans(db, plan_code):
     tenant_id = uuid4()
     subscribe(db, tenant_id, plan_code)
@@ -233,6 +233,12 @@ def test_arca_entitlement_is_enabled_for_initial_supported_plans(db, plan_code):
 def test_custom_plan_keeps_arca_entitlement_manually_configurable(db):
     tenant_id = uuid4()
     subscribe(db, tenant_id, "custom")
+
+    FiscalProfileService(db).require_entitlement(tenant_id)
+    plan = db.scalar(select(Plan).where(Plan.code == "custom"))
+    entitlement = next(item for item in plan.features if item.feature.key == "arca_invoicing")
+    entitlement.enabled = False
+    db.commit()
 
     with pytest.raises(ArcaDomainError) as captured:
         FiscalProfileService(db).require_entitlement(tenant_id)
