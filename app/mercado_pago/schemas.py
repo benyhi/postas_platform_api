@@ -59,6 +59,7 @@ class MercadoPagoOrderCreateRequest(BaseModel):
     amount: Decimal = Field(gt=0, max_digits=15, decimal_places=2)
     currency: Literal["ARS"] = "ARS"
     terminal_id: str | None = Field(default=None, min_length=1, max_length=160)
+    payment_method_default_type: Literal["debit_card", "credit_card", "qr"] | None = None
     external_pos_id: str | None = Field(default=None, min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=255)
     expiration_time: str | None = Field(default=None, max_length=40)
@@ -72,6 +73,8 @@ class MercadoPagoOrderCreateRequest(BaseModel):
             raise ValueError("terminal_id es requerido para orders point")
         if self.type == "qr" and not self.external_pos_id:
             raise ValueError("external_pos_id es requerido para orders qr")
+        if self.payment_method_default_type and self.type != "point":
+            raise ValueError("payment_method_default_type solo aplica a orders point")
         return self
 
 
@@ -89,6 +92,7 @@ class MercadoPagoOrderResponse(BaseModel):
     payment_amount: Decimal | None = None
     payment_status: str | None = None
     payment_status_detail: str | None = None
+    payment_method_type: str | None = None
     qr_data: str | None = None
     expires_at: str | None = None
     terminal_id: str | None = None

@@ -265,7 +265,8 @@ def test_order_payload_uses_current_point_and_dynamic_qr_contract(db_session: Se
     settings = get_settings()
     point = build_order_body(
         MercadoPagoOrderCreateRequest(
-            type="point", external_reference="sale_1", amount="24.00", terminal_id="POINT-1"
+            type="point", external_reference="sale_1", amount="24.00", terminal_id="POINT-1",
+            payment_method_default_type="qr",
         ),
         settings,
     )
@@ -277,12 +278,28 @@ def test_order_payload_uses_current_point_and_dynamic_qr_contract(db_session: Se
     )
 
     assert point["config"]["point"]["terminal_id"] == "POINT-1"
+    assert point["config"]["payment_method"]["default_type"] == "qr"
     assert point["transactions"]["payments"][0]["amount"] == "24.00"
     assert qr["config"]["qr"] == {"external_pos_id": "POS-1", "mode": "dynamic"}
     assert qr["integration_data"] == {
         "platform_id": "platform-123",
         "integrator_id": "integrator-123",
     }
+
+
+def test_order_normalization_returns_confirmed_payment_method() -> None:
+    order = normalize_order({
+        "id": "ORDER-1",
+        "status": "processed",
+        "transactions": {
+            "payments": [{
+                "status": "processed",
+                "payment_method": {"type": "debit_card"},
+            }],
+        },
+    })
+
+    assert order.payment_method_type == "debit_card"
 
 
 def test_keyring_is_separate_from_arca_settings(db_session: Session) -> None:

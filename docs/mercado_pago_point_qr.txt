@@ -15,6 +15,12 @@ POST de create/cancel/refund requiere X-Idempotency-Key. El cliente realiza una
 sola llamada mutable; un timeout se devuelve como resultado incierto para que
 Postas conserve PENDING y reprograme con la misma clave.
 
+Las ordenes Point pueden fijar payment_method_default_type (debit_card,
+credit_card o qr). Sin ese campo, Point mantiene los medios habilitados en la
+terminal. La respuesta canonica incluye payment_method_type para que Postas
+registre el medio realmente procesado. QR en Point requiere una terminal en
+modo PDV; los POS QR independientes siguen usando el flujo dinamico anterior.
+
 Billing ofrece reserve, commit y release para pos_sales. Una reserva activa
 cuenta contra el limite. UsageCounter y UsageEvent aumentan solo en commit. La
 reserva fija el periodo al momento de reserve y las tres operaciones son

@@ -420,6 +420,10 @@ def build_order_body(request: MercadoPagoOrderCreateRequest, settings: Settings)
         if request.ticket_number:
             point["ticket_number"] = request.ticket_number
         body["config"] = {"point": point}
+        if request.payment_method_default_type:
+            body["config"]["payment_method"] = {
+                "default_type": request.payment_method_default_type,
+            }
     else:
         body["config"] = {
             "qr": {"external_pos_id": request.external_pos_id, "mode": "dynamic"}

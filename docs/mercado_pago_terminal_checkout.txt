@@ -1,0 +1,64 @@
+Feature:
+Cobros con tarjeta y QR en terminal Mercado Pago Point
+
+Classification:
+large
+
+Context reviewed:
+- postas-front checkout, useSales y modal de Mercado Pago
+- postas_api ventas, permisos de cancelacion, conciliacion, modelos y worker
+- postas_platform_api Orders API, normalizacion y schemas
+
+Current behavior:
+POINT y QR dinamico crean ordenes pendientes; CARD es local. El modal consulta
+el estado y permite cancelar, pero los empleados no podian cancelar la orden.
+
+Proposed behavior:
+CARD con Point y QR (preferentemente Point; POS QR como fallback) esperan una
+orden canonica. El carrito se conserva hasta aprobacion. La venta registra el
+medio que Mercado Pago confirma. El cajero puede cancelar solo su propio cobro
+externo pendiente mientras su caja siga abierta.
+
+Implementation plan:
+1. Agregar la preferencia de metodo a las ordenes Point y exponer el metodo
+   confirmado por la Orders API.
+2. Enrutar CARD/QR a Point segun la caja; preservar QR por POS cuando no haya
+   terminal Point.
+3. Actualizar checkout, modal, animaciones, cancelacion de cajero y conciliacion.
+4. Cubrir rutas, permisos y metodos confirmados con pruebas focalizadas.
+
+Files changed:
+- postas-front/src/hooks/useSales.js y componentes de checkout/modal
+- postas_api/apps/sales y apps/mercado_pago, tests y documentacion
+- app/mercado_pago, tests/test_mercado_pago.py y documentacion
+
+Tests created or updated:
+- postas_api/apps/mercado_pago/tests.py
+- postas_platform_api/tests/test_mercado_pago.py
+
+Documentation updated:
+- postas_api/README.md y docs/mercado_pago_point_qr.txt
+- postas_platform_api/docs/mercado_pago_point_qr.txt
+
+Checks run:
+- postas_api: `manage.py test apps.mercado_pago.tests` (41 pruebas, todas OK).
+- postas_api: `manage.py check` y `manage.py makemigrations --check --dry-run`
+  (sin errores; no hay migraciones pendientes).
+- postas_platform_api: `pytest tests/test_mercado_pago.py -q` (16 passed).
+- postas-front: ESLint de los tres archivos de checkout/modal (0 errores; una
+  advertencia preexistente de dependencia de efecto en `useSales.js`).
+- postas-front: `npm run build` (compilación y generación estática completas).
+- En los tres repositorios: `git diff --check` sin errores.
+
+Risks:
+- Point solo restringe cada orden a QR, debito o credito; para aceptar debito y
+  credito se deja que la terminal muestre los medios habilitados y se persiste
+  el medio confirmado.
+- QR en la terminal requiere modo PDV; el flujo QR por POS queda disponible.
+
+Important notes:
+- No se requiere migracion de base de datos.
+- No se crearon commits.
+- La revisión final corrigió dos carreras: el rechazo al cancelar no pisa una
+  conciliación ya aprobada, y una repetición idempotente de CARD sigue
+  devolviendo la venta pendiente aunque se haya desvinculado Point.

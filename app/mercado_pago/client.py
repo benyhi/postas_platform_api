@@ -227,6 +227,11 @@ def normalize_order(payload: dict[str, Any]) -> MercadoPagoOrderResponse:
         payment_amount=_decimal_or_none(payment.get("amount")),
         payment_status=_string_or_none(payment.get("status")),
         payment_status_detail=_string_or_none(payment.get("status_detail")),
+        payment_method_type=_string_or_none(
+            (payment.get("payment_method") or {}).get("type")
+            if isinstance(payment.get("payment_method"), dict)
+            else None
+        ),
         qr_data=_string_or_none(payload.get("qr_data") or qr.get("qr_data")),
         expires_at=_string_or_none(
             payload.get("expiration_date")
